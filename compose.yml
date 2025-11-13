@@ -44,16 +44,16 @@ services:
       network: host
     ports:
       - "5273:80/tcp"
-  aeronim:
-    image: "nvcr.io/nim/nvidia/domino-automotive-aero:1.0.0"
-    runtime: nvidia
-    environment:
-      CUDA_VISIBLE_DEVICES: "1"
-      NGC_API_KEY: "${NGC_API_KEY}"
+  upload:
+    image: "rtdt-upload-service:latest"
+    restart: unless-stopped
+    build:
+      context: upload-service
+    ports:
+      - "8080:8080/tcp"
+    volumes:
+      - "./uploaded_files:/app/uploaded_files"
     network_mode: host
-    ipc: host
-    ports: 
-      - "8080:8080"
   zmq:
     image: "rtdt-zmq-service:latest"
     restart: unless-stopped
@@ -62,8 +62,9 @@ services:
       dockerfile: service_network/Dockerfile
     environment:
       ZMQ_PORT: "5555"
-      NIM_TRITON_IP_ADDRESS: "${NIM_TRITON_IP_ADDRESS:-localhost}"
-      NIM_TRITON_HTTP_PORT: "${NIM_TRITON_HTTP_PORT:-8080}"
+      UPLOAD_FILES_DIR: "/app/uploaded_files"
+    volumes:
+      - "./uploaded_files:/app/uploaded_files"
     network_mode: host
     ipc: host
     ulimits:

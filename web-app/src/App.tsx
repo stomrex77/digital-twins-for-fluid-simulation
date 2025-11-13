@@ -17,8 +17,10 @@ import CurveTraceMenu from './Menus/CurveTrace/CurveTraceMenu';
 import VolumeTraceMenu from './Menus/VolumeTrace/VolumeTraceMenu';
 import VariantsMenu from './Menus/Vehicles/VariantsMenu';
 import SliceMenu from "./Menus/Slice/SliceMenu";
+import FileUploadMenu from './Menus/FileUpload/FileUploadMenu';
 import { useOmniverseApi } from './OmniverseApiContext';
 import InferenceStatusComponent from './InferenceStatus';
+import { MdUploadFile } from "react-icons/md";
 
 
 
@@ -34,6 +36,7 @@ function App() {
   const [, setIsSliceVisible] = useState(false);
   const [isSliceActive, setIsSliceActive] = useState(false);
   const [showInferenceStatus, setShowInferenceStatus] = useState(false);
+  const [isFileUploadVisible, setIsFileUploadVisible] = useState(false);
   
 
   // state for slice menu
@@ -348,11 +351,23 @@ function App() {
 
           <div className='side-button-container'>
               <button
+                className="upload-button"
+                onClick={() => setIsFileUploadVisible(!isFileUploadVisible)}
+                title="Upload STL and Streamlines"
+                ><MdUploadFile />
+                </button>
+              <button
                 className="reset-button"
                 onClick={() => handleClick('Reset')}
                 ><IoIosRefreshCircle />
                 </button>
             </div>
+
+            {/* File Upload Menu */}
+            <FileUploadMenu
+              isVisible={isFileUploadVisible}
+              onClose={() => setIsFileUploadVisible(false)}
+            />
 
           {true &&
 

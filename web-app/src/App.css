@@ -76,6 +76,23 @@
   pointer-events: all;
   }
 
+.upload-button {
+  color:#ccc;
+  margin-top: 8px;
+  margin-right: 8px;
+  background-color: transparent;
+  width: 45px;
+  height: 30px;
+  font-size: 18px;
+  border: none;
+  cursor: pointer;
+}
+
+.upload-button:hover {
+  color:#76b900;
+  border: none;
+}
+
 .reset-button {
   color:#ccc;
   margin-top: 8px;
@@ -83,6 +100,8 @@
   width: 45px;
   height: 30px;
   font-size: 12px;
+  border: none;
+  cursor: pointer;
 }
 
 .reset-button:hover {

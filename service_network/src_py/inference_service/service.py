@@ -4,8 +4,7 @@ import uuid
 import json
 import numpy as np
 import trimesh
-import tritonclient.http as httpclient
-from tritonclient.utils import * 
+from pathlib import Path
 
 from .file_inference import FileInference
 
@@ -22,6 +21,9 @@ class Service:
     extension = ""
     config_request_old = {}
     file_inferences = {}
+    uploaded_files_dir = None
+    current_stl_path = None
+    current_streamlines_path = None
 
     def __init__(self,
                  files=[],
@@ -29,12 +31,14 @@ class Service:
                  unnormalize=False,
                  preload=True,
                  prune_points=0,
-                 num_points=NUM_SAMPLE_POINTS):
+                 num_points=NUM_SAMPLE_POINTS,
+                 uploaded_files_dir=None):
         self.field_names = field_names
         self.unnormalize_data = unnormalize
         self.preload_data = preload
         self.prune_points = prune_points
         self.num_sample_points = num_points
+        self.uploaded_files_dir = uploaded_files_dir or os.environ.get("UPLOAD_FILES_DIR", "/app/uploaded_files")
 
         self._reset_config()
 
@@ -85,24 +89,29 @@ class Service:
         return file_index
 
     def _get_data_from_script(self, config_request):
+        """Load data from uploaded files instead of running Triton inference"""
 
         if config_request == self.config_request_old:
             return
 
-        stl_path = config_request['id']
-        stream_velocity = config_request['config']
-        multiplier = config_request['multip'] if 'multip' in config_request else 1.0
-        multiplier = 1.0 if multiplier < 0.0 else multiplier
+        # config_request['id'] now contains the filename (not an integer ID)
+        # config_request['streamlines'] contains the streamlines JSON filename
+        stl_filename = config_request.get('id', 'default.stl')
+        streamlines_filename = config_request.get('streamlines', 'streamlines.json')
 
         self.config_request_old = config_request
 
-        sample_points = int(self.num_sample_points * multiplier)
+        print(f"Loading uploaded files: STL={stl_filename}, Streamlines={streamlines_filename}")
 
-        print("STARTING TRITION INFERENCE")
-        triton_data = self.triton_inference(stl_path, stream_velocity, sample_points)
-        print("ENDING TRITION INFERENCE")
+        # Load uploaded files
+        uploaded_data = self.load_uploaded_files(stl_filename, streamlines_filename)
 
-        self.data = triton_data
+        if uploaded_data:
+            self.data = uploaded_data
+            print("Successfully loaded uploaded files")
+        else:
+            print("WARNING: Failed to load uploaded files, using empty data")
+            self.data = {}
 
     @staticmethod
     def prune_point_count(array, field_name):
@@ -243,149 +252,99 @@ class Service:
         }
         return metadata, array
 
-    def _trimesh_to_json(self,trimesh_obj, additional_data=None):
-        """Convert a Trimesh object to a JSON-serializable format."""
-        # Extract mesh attributes directly from Trimesh
-        vertices = trimesh_obj.vertices.tolist()  # Convert to list
-        faces = trimesh_obj.faces.tolist()  # List of triangle face indices
-        centers = trimesh_obj.triangles_center.tolist()  # Centers of triangles
-        surface_areas = trimesh_obj.area_faces.tolist()  # Surface areas of triangles
+    def load_uploaded_files(self, stl_filename, streamlines_filename):
+        """
+        Load STL file and streamlines JSON from uploaded files directory
 
-        if not (vertices and faces):
-            raise ValueError("Vertices and faces are required for JSON payload.")
+        Args:
+            stl_filename: Name of the STL file
+            streamlines_filename: Name of the streamlines JSON file
 
-        # Construct JSON payload
-        payload = {
-            "vertices": vertices,
-            "faces": faces,
-            "centers": centers,
-            "surface_areas": surface_areas,
-        }
-
-        # Add additional parameters if provided
-        if additional_data:
-            payload.update(additional_data)
-
-        return json.dumps(payload)
-
-    def triton_inference(self, id, stream_velocity=30.0, num_sample_points = 20000):
-        # Configuration
-        IP = os.environ.get("NIM_TRITON_IP_ADDRESS", "localhost")
-        TRITON_HTTP_PORT = os.environ.get("NIM_TRITON_HTTP_PORT", "8080")
-        MODEL_NAME = "controller"
-        TRITON_TIMEOUT = 10 * 60
-
-        # Input parameters
-        STL_PATH_FMT = "/data/low_res/detailed_car_%d/aero_suv_low.stl"
-        stl_file_path = STL_PATH_FMT % id
-        stencil_size = 1  # Example stencil size
-        inlet_velocity = stream_velocity # Example inlet velocity
-        point_cloud_size = num_sample_points # Example point cloud size
-        inference_mode = "volume"  # Example inference mode
-
-       # Read and prepare the STL file
-        stl_mesh = trimesh.load(stl_file_path)
-        vertices = stl_mesh.vertices.astype(np.float32)  # Nx3
-        faces = stl_mesh.faces.astype(np.int32)  # Mx3
-        centers = stl_mesh.triangles_center.astype(np.float32)  # Px3
-        surface_normals =  stl_mesh.face_normals.astype(np.float32)  # Px3
-        surface_areas = stl_mesh.area_faces.astype(np.float32)  # Px1
-
-        # Initialize Triton client
-        client = httpclient.InferenceServerClient(url=f"{IP}:{TRITON_HTTP_PORT}", ssl=False)
-
-        # Prepare inputs and outputs
-        inputs = []
-        outputs = []
-
-        # Input tensors
-        inputs.append(httpclient.InferInput("vertices", vertices.shape, "FP32"))
-        inputs[-1].set_data_from_numpy(vertices)
-
-        inputs.append(httpclient.InferInput("faces", faces.shape, "INT32"))
-        inputs[-1].set_data_from_numpy(faces)
-
-        inputs.append(httpclient.InferInput("centers", centers.shape, "FP32"))
-        inputs[-1].set_data_from_numpy(centers)
-
-        inputs.append(httpclient.InferInput("surface_normals", surface_normals.shape, "FP32"))
-        inputs[-1].set_data_from_numpy(surface_normals)
-
-        inputs.append(httpclient.InferInput("surface_areas", surface_areas.shape, "FP32"))
-        inputs[-1].set_data_from_numpy(surface_areas)
-
-        inputs.append(httpclient.InferInput("STREAM_VELOCITY", [1], "FP32"))
-        inputs[-1].set_data_from_numpy(np.array([stream_velocity], dtype=np.float32))
-
-        inputs.append(httpclient.InferInput("STENCIL_SIZE", [1], "INT32"))
-        inputs[-1].set_data_from_numpy(np.array([stencil_size], dtype=np.int32))
-
-        inputs.append(httpclient.InferInput("POINT_CLOUD_SIZE", [1], "INT32"))
-        inputs[-1].set_data_from_numpy(np.array([point_cloud_size], dtype=np.int32))
-
-        inputs.append(httpclient.InferInput("INFERENCE_MODE", [1], "BYTES"))
-        inputs[-1].set_data_from_numpy(np.array([inference_mode], dtype=np.object_))
-
-        # Output tensors
-        outputs.append(httpclient.InferRequestedOutput("velocity"))
-        outputs.append(httpclient.InferRequestedOutput("coordinates"))
-        outputs.append(httpclient.InferRequestedOutput("pressure"))
-        outputs.append(httpclient.InferRequestedOutput("turbulent-kinetic-energy"))
-        outputs.append(httpclient.InferRequestedOutput("turbulent-viscosity"))
-        outputs.append(httpclient.InferRequestedOutput("bounding_box_dims"))
-        outputs.append(httpclient.InferRequestedOutput("sdf"))
-        outputs.append(httpclient.InferRequestedOutput("ERROR_MESSAGE"))
-      
-        # Send inference request
-        print(f"Sending inference request for {stl_file_path}...")
-        start_time = time.time()
-
+        Returns:
+            Dictionary with coordinates, velocity, streamlines_data, and bounding_box_dims
+        """
         output_data = {}
+
         try:
-            response = client.infer(
-                model_name=MODEL_NAME,
-                inputs=inputs,
-                outputs=outputs,
-                request_id=str(uuid.uuid1()),
-                timeout=TRITON_TIMEOUT,
-            )
-            end_time = time.time()
+            # Build paths
+            stl_dir = Path(self.uploaded_files_dir) / "stl"
+            streamlines_dir = Path(self.uploaded_files_dir) / "streamlines"
 
-            # Handle response
-            error_message = response.as_numpy("ERROR_MESSAGE")[0].decode("utf-8")
+            stl_path = stl_dir / stl_filename
+            streamlines_path = streamlines_dir / streamlines_filename
 
-            if error_message:
-                print("Error from Triton server:", error_message)
+            print(f"Looking for STL at: {stl_path}")
+            print(f"Looking for streamlines at: {streamlines_path}")
+
+            # Load STL file
+            if stl_path.exists():
+                print(f"Loading STL file: {stl_path}")
+                stl_mesh = trimesh.load(str(stl_path))
+
+                # Get bounding box
+                bounds = stl_mesh.bounds  # [[xmin, ymin, zmin], [xmax, ymax, zmax]]
+                output_data["bounding_box_dims"] = bounds.astype(np.float32)
+
+                # Store STL mesh data
+                output_data["stl_vertices"] = stl_mesh.vertices.astype(np.float32)
+                output_data["stl_faces"] = stl_mesh.faces.astype(np.int32)
+
+                self.current_stl_path = str(stl_path)
+                print(f"Loaded STL: {stl_mesh.vertices.shape[0]} vertices, bounds: {bounds}")
             else:
-                # Parse outputs
-                velocity = response.as_numpy("velocity")  # Nx3
-                coordinates = response.as_numpy("coordinates")  # Nx3
-                pressure = response.as_numpy("pressure")  # Nx1
-                turbulent_kinetic_energy = response.as_numpy("turbulent-kinetic-energy")   # Nx1
-                turbulent_viscosity = response.as_numpy("turbulent-viscosity")  # Nx1
-                bounding_box_dims = response.as_numpy("bounding_box_dims")  # 2x3
-                sdf = response.as_numpy("sdf")
+                print(f"WARNING: STL file not found: {stl_path}")
+                # Use default bounds
+                output_data["bounding_box_dims"] = BOUNDS.astype(np.float32)
 
-                print("Inference successful!")
-                print(f"Velocity shape: {velocity.shape}, dtype: {velocity.dtype}")
-                print(f"Coordinates shape: {coordinates.shape}, dtype: {coordinates.dtype}")
-                print(f"Pressure shape: {pressure.shape}, dtype: {pressure.dtype}")
-                print(f"Turbulent kinetic energy shape: {turbulent_kinetic_energy.shape}, dtype: {turbulent_kinetic_energy.dtype}")
-                print(f"Turbulent viscosity shape: {turbulent_viscosity.shape}, dtype: {turbulent_viscosity.dtype}")
-                print(f"Bounding box dimensions: {bounding_box_dims.shape}, dtype: {bounding_box_dims.dtype}")
-                print(f"SDF shape: {sdf.shape}, dtype: {sdf.dtype}")
+            # Load streamlines JSON
+            if streamlines_path.exists():
+                print(f"Loading streamlines JSON: {streamlines_path}")
+                with open(streamlines_path, 'r') as f:
+                    streamlines_data = json.load(f)
 
-                output_data["velocity"]= velocity [0]
-                output_data["coordinates"] = coordinates [0]
-                output_data["pressure"] = pressure [0]
-                output_data["turbulent-kinetic-energy"] = turbulent_kinetic_energy [0]
-                output_data["turbulent-viscocity"] = turbulent_viscosity[0]
-                output_data["bounding_box_dims"] = bounding_box_dims
-                output_data["sdf"] = sdf[0]
+                # Store the full streamlines data for direct use by Kit App
+                output_data["streamlines_json"] = streamlines_data
 
-            print(f"Inference completed in {end_time - start_time:.2f} seconds.")
+                # Also convert to coordinates/velocity format for compatibility
+                all_points = []
+                all_velocities = []
 
-        except InferenceServerException as e:
-            print(f"Triton inference failed: {e}")
+                for streamline in streamlines_data.get("streamlines", []):
+                    path = np.array(streamline["path"], dtype=np.float32)
 
-        return output_data
+                    # Use scalar values as velocity magnitudes if available
+                    if "scalar" in streamline:
+                        scalars = np.array(streamline["scalar"], dtype=np.float32)
+                        # Create velocity vectors (assuming flow in X direction for now)
+                        # This is a simplified representation
+                        velocities = np.column_stack([scalars, np.zeros_like(scalars), np.zeros_like(scalars)])
+                    else:
+                        # Default velocity
+                        velocities = np.ones((len(path), 3), dtype=np.float32) * 30.0
+
+                    all_points.append(path)
+                    all_velocities.append(velocities)
+
+                if all_points:
+                    output_data["coordinates"] = np.vstack(all_points)
+                    output_data["velocity"] = np.vstack(all_velocities)
+                    output_data["pressure"] = np.zeros((len(output_data["coordinates"]),), dtype=np.float32)
+
+                    print(f"Loaded {len(streamlines_data.get('streamlines', []))} streamlines")
+                    print(f"Total points: {len(output_data['coordinates'])}")
+
+                self.current_streamlines_path = str(streamlines_path)
+            else:
+                print(f"WARNING: Streamlines file not found: {streamlines_path}")
+                # Create minimal dummy data
+                output_data["coordinates"] = np.zeros((100, 3), dtype=np.float32)
+                output_data["velocity"] = np.ones((100, 3), dtype=np.float32) * 30.0
+                output_data["pressure"] = np.zeros((100,), dtype=np.float32)
+
+            return output_data
+
+        except Exception as e:
+            print(f"ERROR loading uploaded files: {e}")
+            import traceback
+            traceback.print_exc()
+            return None

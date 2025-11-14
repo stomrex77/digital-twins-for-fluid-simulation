@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import './FileUploadMenu.css';
+import { useOmniverseApi } from '../../OmniverseApiContext';
 
 interface FileInfo {
   name: string;
@@ -22,6 +23,7 @@ const FileUploadMenu: React.FC<FileUploadMenuProps> = ({ isVisible, onClose }) =
     streamline_files: FileInfo[];
   }>({ stl_files: [], streamline_files: [] });
 
+  const { api } = useOmniverseApi();
   const API_BASE = 'http://localhost:8080';
 
   if (!isVisible) return null;
@@ -154,6 +156,36 @@ const FileUploadMenu: React.FC<FileUploadMenuProps> = ({ isVisible, onClose }) =
     }
   };
 
+  const loadStlIntoScene = async (filename: string) => {
+    if (!api) {
+      setUploadStatus('✗ API not connected');
+      return;
+    }
+
+    try {
+      setUploadStatus(`Loading ${filename} into scene...`);
+      await api.request('load_uploaded_files', { stl_filename: filename });
+      setUploadStatus(`✓ ${filename} loaded into scene`);
+    } catch (error) {
+      setUploadStatus(`✗ Failed to load: ${error}`);
+    }
+  };
+
+  const loadStreamlinesIntoScene = async (filename: string) => {
+    if (!api) {
+      setUploadStatus('✗ API not connected');
+      return;
+    }
+
+    try {
+      setUploadStatus(`Loading ${filename} into scene...`);
+      await api.request('load_uploaded_files', { streamlines_filename: filename });
+      setUploadStatus(`✓ ${filename} loaded into scene`);
+    } catch (error) {
+      setUploadStatus(`✗ Failed to load: ${error}`);
+    }
+  };
+
   // Fetch files on mount
   React.useEffect(() => {
     if (isVisible) {
@@ -229,6 +261,13 @@ const FileUploadMenu: React.FC<FileUploadMenuProps> = ({ isVisible, onClose }) =
                   {(file.size / 1024).toFixed(1)} KB
                 </span>
                 <button
+                  className="upload-btn"
+                  onClick={() => loadStlIntoScene(file.name)}
+                  style={{ marginRight: '5px' }}
+                >
+                  Load
+                </button>
+                <button
                   className="delete-btn"
                   onClick={() => deleteStl(file.name)}
                 >
@@ -249,6 +288,13 @@ const FileUploadMenu: React.FC<FileUploadMenuProps> = ({ isVisible, onClose }) =
                 <span className="file-size">
                   {file.num_streamlines} streamlines
                 </span>
+                <button
+                  className="upload-btn"
+                  onClick={() => loadStreamlinesIntoScene(file.name)}
+                  style={{ marginRight: '5px' }}
+                >
+                  Load
+                </button>
                 <button
                   className="delete-btn"
                   onClick={() => deleteStreamlines(file.name)}

@@ -756,6 +756,70 @@ def set_gradient_scale(min_val: float, max_val: float) -> bool:
         set_prim_attribute("/World/IndeX/Volume/MaterialVelocity_Preset01/Colormap", "domain", Gf.Vec2f([min_val, max_val]))
     return True
 
+@app.request
+def load_uploaded_files(stl_filename: str = None, streamlines_filename: str = None) -> bool:
+    """
+    Load uploaded STL and/or streamlines files into the scene
+
+    Args:
+        stl_filename: Name of the STL file to load (optional)
+        streamlines_filename: Name of the streamlines JSON file to load (optional)
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        import os
+        from ov.cgns.json_streamlines import load_stl_as_mesh, load_streamlines_from_json
+
+        stage = omni.usd.get_context().get_stage()
+        upload_dir = "/data/uploads"
+        success = True
+
+        # Load STL file if provided
+        if stl_filename:
+            stl_path = os.path.join(upload_dir, "stl", stl_filename)
+            if os.path.exists(stl_path):
+                carb.log_info(f"Loading STL file: {stl_path}")
+                result = load_stl_as_mesh(stl_path, stage, mesh_prim_path="/World/UploadedSTL")
+                if not result:
+                    carb.log_error(f"Failed to load STL file: {stl_filename}")
+                    success = False
+                else:
+                    carb.log_info(f"Successfully loaded STL: {stl_filename}")
+            else:
+                carb.log_error(f"STL file not found: {stl_path}")
+                success = False
+
+        # Load streamlines file if provided
+        if streamlines_filename:
+            streamlines_path = os.path.join(upload_dir, "streamlines", streamlines_filename)
+            if os.path.exists(streamlines_path):
+                carb.log_info(f"Loading streamlines file: {streamlines_path}")
+                result = load_streamlines_from_json(
+                    streamlines_path,
+                    stage,
+                    parent_prim_path="/World/UploadedStreamlines",
+                    curve_prim_path="/World/UploadedStreamlines/Curves",
+                    width=0.5
+                )
+                if not result:
+                    carb.log_error(f"Failed to load streamlines file: {streamlines_filename}")
+                    success = False
+                else:
+                    carb.log_info(f"Successfully loaded streamlines: {streamlines_filename}")
+            else:
+                carb.log_error(f"Streamlines file not found: {streamlines_path}")
+                success = False
+
+        return success
+
+    except Exception as e:
+        carb.log_error(f"Error loading uploaded files: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 @app.signal
 def inference_complete(**kwargs):
         print(f"Inference Complete: {kwargs}")
